@@ -1,0 +1,206 @@
+#import packages
+
+import numpy, pandas as pd
+import sklearn
+import matplotlib.pyplot as plt
+import math
+
+
+
+# Read data
+data = pd.read_csv('C:\Users\yashr\Desktop\Movies project\movies.csv',quotechar='"')
+
+#check the data
+y=data.head()
+print y
+
+# Preprocessing the dataset
+
+# removeping all non ascii titles
+def is_ascii(s):
+    return all(ord(c) < 128 for c in s)
+
+data = data.remove(data[data['title'].apply(lambda t: not is_ascii(t))].index)
+
+# Processing titles for movies
+
+import re
+def process_title(title):
+    # remove numbers and parenthesis
+    title = title.replace('(','').replace(')','')
+    title = re.sub(r'\d+','',title)
+
+    #remove II and III and IV
+    title = title.replace('II','').replace('III','').replace('IV','')
+    return title
+
+    # remove "part" word
+    title = re.sub(r'[Pp]art','',title)
+    
+
+data['title'] = data['title'].apply(process_title)
+
+#remove empty titles
+data = data.(data[data['title'].str.strip() ==''].index)
+
+#Converting to binary classification
+
+# remove movies with no genres
+data['genres'] = data['genres'].apply(lambda gs:gs.lower())
+
+# get all movie genres
+genres = set()
+for gs in data['genres'].str.split('|'):
+    genres |= set(gs)
+genres.remove('(no genres listed)')
+
+for g in genres:
+    data[g] = data['genres'].apply(lambda gs: 1 if g in gs.split('|') else 0)
+
+
+#check the data
+data.head()
+
+#Converting to lower case for better search
+
+data['title']=data['title'].apply(lambda t: t.lower())
+
+#Checking class distribution
+
+d = dict(data.mean())
+del d['movieId']
+
+#sorting genres by occurence
+gen_sorted = sorted(d.keys(),key=lambda x:d[x])
+
+# removeping the 6 least common genres
+for g in gen_sorted[:6]:
+    data = data.remove(g,axis=1)
+    genres.remove(g)
+
+# checking classes distribution
+plt.ylim((0,1.0))
+plt.ylabel('portion of positive examples')
+data[list(genres)].mean().plot(kind='bar')
+
+#creating balanced dataset for each genre 
+# using undersampling technique
+
+b_data = {}
+for g in genres:
+    ex_pos = data[data[g]==1]
+    ex_neg = data[data[g]==0].sample(n=len(ex_pos.index))
+    b_data[g] = ex_pos.append(ex_neg)
+
+
+# Implementing machine learning Algorithms
+
+# Naive Bayes
+
+from sklearn.model_selection import train_test_split
+train, test = train_test_split(data, train_size = 0.6)
+
+from collections import defaultdict
+from nltk.tokenize import RegexpTokenizer
+tokenizer = RegexpTokenizer(r'\w+')
+
+def learn_counts(train, target):
+    cnt_word_given_class = defaultdict(lambda: defaultdict(lambda :0))
+    for i,row in train.iterrows():
+        classes = train[target].unique()
+        for word in tokenizer.tokenize(row['title']):
+            cnt_word_given_class[word][row[target]]+=1.0
+    cnt_classes = {c:len(train[train[target]==c].index) for c in classes}
+    V = len(cnt_word_given_class.keys())
+    return classes, cnt_classes, cnt_word_given_class, V
+
+def get_class_prob_given_word(word,cnt_w_c, cnt_c,classes,K):
+    return {c: (1.0*K + cnt_w_c[word][c])  / (cnt_c[c] + K*V) for c in classes}
+
+def get_text_class (text,cnt_w_c, cnt_c, V, classes=[0,1],K=1):
+    probs = {c:0 for c in classes}
+    for word in tokenizer.tokenize(text):
+            word_probs = get_class_prob_given_word(word,cnt_w_c,cnt_c,classes,K)
+            for c in probs:
+                probs[c] += math.log(word_probs[c])
+
+    return max(probs.keys(), key=lambda x:probs[x])
+
+    f1_scores = []
+for g in genres:
+    train,test = train_test_split(b_data[g],train_size = 0.6)
+    classes,cnt_c,cnt_w_c, V = learn_counts(train,g)
+    y_pred = test['title'].apply(lambda t: get_text_class(t,cnt_w_c,cnt_c, V))
+    f1_scores.append(f1_score(y_pred,test[g]))
+    print 'for genre %s , f1 score is %.2f' %(g, f1_scores[-1])
+
+print 'average f1 score over all genres : %.2f' %(np.mean(f1_scores))
+
+
+# SVM
+
+import sklearn.svm as svm
+from sklearn.metrics import f1_score
+clf = svm.SVC(kernel='rbf')
+f1_scores = []
+for g in genres:
+    genre_data = b_data[g]
+    train,test = train_test_split(genre_data,train_size = 0.6)
+    train_feature_matrix = get_mean_embeddings(train['title'],embeddings)
+    test_feature_matrix = get_mean_embeddings(test['title'],embeddings)
+    clf.fit(train_feature_matrix,train[g])
+    y_pred = clf.predict(test_feature_matrix)
+    f1_scores.append(f1_score(test[g],y_pred))
+    print 'for "%s" , f1 score = %.2f' %(g,f1_scores[-1])
+
+print 'average f1 score over all genres : %.2f ' %(np.mean(f1_scores))
+
+#Logistic Regression
+
+from sklearn.linear_model import LogisticRegression
+clf = LogisticRegression()
+for g in genres:
+    genre_data = b_data[g]
+    train,test = train_test_split(genre_data,train_size = 0.6)
+    train_feature_matrix = get_mean_embeddings(train['title'],embeddings)
+    test_feature_matrix = get_mean_embeddings(test['title'],embeddings)
+    clf.fit(train_feature_matrix,train[g])
+    y_pred = clf.predict(test_feature_matrix)
+    f1_scores.append(f1_score(test[g],y_pred))
+    print 'for "%s" , f1 score = %.2f' %(g,f1_scores[-1])
+
+print 'average f1 score over all genres : %.2f ' %(np.mean(f1_scores))
+
+
+#KNN
+
+import sklearn.neighbors
+clf = sklearn.neighbors.KNeighborsClassifier(n_neighbors=10)
+for g in genres:
+    genre_data = b_data[g]
+    train,test = train_test_split(genre_data,train_size = 0.6)
+    train_feature_matrix = get_mean_embeddings(train['title'],embeddings)
+    test_feature_matrix = get_mean_embeddings(test['title'],embeddings)
+    clf.fit(train_feature_matrix,train[g])
+    y_pred = clf.predict(test_feature_matrix)
+    f1_scores.append(f1_score(test[g],y_pred))
+    print 'for "%s" , f1 score = %.2f' %(g,f1_scores[-1])
+
+print 'average f1 score over all genres : %.2f ' %(np.mean(f1_scores))
+
+
+# Random Forest
+
+from sklearn.ensemble import RandomForestClassifier
+clf = RandomForestClassifier(n_estimators=20)
+for g in genres:
+    genre_data = b_data[g]
+    train,test = train_test_split(genre_data,train_size = 0.6)
+    train_feature_matrix = get_mean_embeddings(train['title'],embeddings)
+    test_feature_matrix = get_mean_embeddings(test['title'],embeddings)
+    clf.fit(train_feature_matrix,train[g])
+    y_pred = clf.predict(test_feature_matrix)
+    f1_scores.append(f1_score(test[g],y_pred))
+    print 'for "%s" , f1 score = %.2f' %(g,f1_scores[-1])
+
+print 'average f1 score over all genres : %.2f ' %(np.mean(f1_scores))
